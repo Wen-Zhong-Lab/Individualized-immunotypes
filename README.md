@@ -1,4 +1,4 @@
-# Systems-level longitudinal immune profiling reveals individualized immunotypes and genetic associations 
+# Longitudinal multi-omic immune profiling reveals stable individualized immunotypes shaped by physiology and genetic variation
 **Authors**
 
 Alberto Zenere1,2#, Xingyue Wang1,2#, Ziyang Tan3, Tadepally Lakshmikanth 3,8,9, Jaromir Mikes3, Yang Chen3, Maria Johansson4, Göran Bergström5,6, Fredrik Edfors7, Mathias Uhlen7, Petter Brodin3,8,9, Wen Zhong1,2,10*
