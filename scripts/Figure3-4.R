@@ -1655,6 +1655,38 @@ radarchart(df.plot,
 dev.off()
 
 
+#lm for clinical and lifestyle
+library("emmeans")
+
+clinical <- metadata %>%
+  subset(select=-c(SCAPISorIGT_id, subject, Study, Visitdate, id, visit, Birthdate, subject_id,
+                   Hb, WBC, Plt, RBC, Hct, MCV, MCH, MCHC, Neut, Lymph, Mono, Eos, Baso,
+                   Housing_change, Housing_current, Address_change, MaritalStatus_change, MaritalStatus_current, ShareHousehold_change, 
+                   ShareHousehold_current, Employment_change, Employment_current, Tobacco_change, Tobacco_current, PerceivedHealth,       
+                   Stress, PhysicalActivity, SedentaryTime_hours, SedentaryTime_minutes, SedentaryTime_unknown, TravelAbroad,          
+                   TravelAbroad_country, Animals, Animals_type,
+                   Calcitriol, Calcidiol, Health_Other, Common_cold_influenzae, NSAID_painmed, Bp_med, Lipid_med,             
+                   Antibiotics_med, Diab_med, Med_details, Smoking, Smoking_hours)) %>% 
+  mutate(Gender=ifelse(Gender=="m", 1, 0))
+
+lm.clinical <- data.frame()
+for (n in 1:ncol(clinical)){
+  
+  df <- primary_cluster
+  df$primary_cluster <- as.character(df$primary_cluster)
+  df$x <- clinical[match(df$sample, metadata$id), n]
+  
+  fit <- lm(x ~ primary_cluster, df)
+  lm.clinical <- rbind(lm.clinical,
+                       emmeans(fit, specs = "primary_cluster") %>%
+                         contrast(method = "del.eff", adjust = "none") %>% as.data.frame() %>% mutate(var=colnames(clinical)[n]))
+  
+}
+lm.clinical$adj.pval <- p.adjust(lm.clinical$p.value,  method="BH")
+lm.clinical$cluster <- NA
+lm.clinical$cluster[lm.clinical$contrast == "primary_cluster1 effect"] <- "clusterA"
+lm.clinical$cluster[lm.clinical$contrast == "primary_cluster2 effect"] <- "clusterB"
+lm.clinical$cluster[lm.clinical$contrast == "primary_cluster3 effect"] <- "clusterC"
 
 #Write Suppl Table with lm ####
 df <- lm.clinical %>% arrange(adj.pval)
