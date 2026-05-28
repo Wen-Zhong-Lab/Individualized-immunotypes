@@ -12,74 +12,13 @@ for (i in 1:length(pack_R)) {
 set.seed(1)
 
 
-# Load ####
-# Annotation of individuals
-anno <- read.csv("C:/Users/albze08/Desktop/postDoc/genome-protein/data/WELLNESS/Wellness/Data/Wellness_barcodes.txt", sep="\t", header=T)
-anno <- anno[anno$Sample.type=="Helblod",]
+# Load ####vcf <- read.vcfR("original.genotype.vcf")
+clinical <- read.table("original.clinical.txt", sep="\t", header = T)
+metadata <- read.table("original.metadata.txt", sep="\t", header = T)
 
-# metadata
-metadata <- read.csv("C:/Users/albze08/Desktop/postDoc/genome-protein/data/WELLNESS/Wellness/Data/Metadata/complete.clinical.data.wellness.t2d.txt", sep="\t", header=T)
-metadata <- metadata[- which(metadata$Study=="T2D"), ]
-metadata$visit <- as.character(metadata$visit)
-metadata$subject_id <- gsub("1-", "", metadata$subject_id)
-metadata$id <- paste0(metadata$subject_id, ":", metadata$visit)
-rownames(metadata) <- metadata$id
-
-# Filter metadata
-clinical <- metadata
-rownames(clinical) <- metadata$id
-clinical$Gender <- ifelse(clinical$Gender=="f", 0, 1)
-clinical <- subset(clinical, select=-c(visit, Number, subject_id, Study, Visitdate, subject_short, id, 
-                                       WBC, Neut, Lymph, Mono, Eos, Baso,
-                                       Hct, Hb, MCH, MCHC, RBC, MCV, Plt)) %>%
-  na.omit()
-
-#RNA-seq S3WP
-rna_s3wp <- read.table("data/wellness_PBMC_v16_norm.txt", sep="\t", header = T)
-
-#Cytof S3WP
-cytof <- read.table("data/original.cytof.txt", sep="\t", header = T)
-rownames(cytof) <- cytof$SampleID
-cytof <- subset(cytof, select=-SampleID)
-rownames(cytof) <- gsub("_", ":", rownames(cytof))
-
-# Re-format RNA-seq ####
-gene <- unique(rna_s3wp$ensg_id)
-Ngene <- length(gene)
-ind <- unique(rna_s3wp$subject)
-Nind <- length(ind)
-
-# Reformat Gene expression
-sample <- paste0(rna_s3wp$subject, ":", rna_s3wp$visit)
-rna_s3wp$sample <- sample
-
-rna.long <- rna_s3wp[, c("sample", "ensg_id", "NX")]
-rna <- pivot_wider(rna.long, names_from = ensg_id, values_from = NX) %>% as.data.frame()
-rownames(rna) <- rna$sample
-rna <- rna[,-1]
-rownames(rna) <- gsub("1-", "", rownames(rna))
-rownames(rna) <- gsub("V", "", rownames(rna))
-
-rm(rna.long)
-
-#remove genes with zero variance
-v <- apply(rna, 2, sd)
-rna <- rna[, v>0]
-
-#remove lowly expressed genes
-filter.genes <- filterByExpr(t(rna), min.count = 5, min.total.count = 10, large.n = 10, min.prop = 0.7)
-rna <- rna[,filter.genes]
-
-# symbol ID
-ensg <- colnames(rna)
-ensg.symbol <- data.frame(ensg=ensg , symbol=mapIds(org.Hs.eg.db, keys = ensg, keytype = "ENSEMBL", column="SYMBOL"))
-
-colnames(rna) <- ensg.symbol$symbol[match(colnames(rna), ensg.symbol$ensg)]
-rna <- rna[,!is.na(colnames(rna))]
-ensg.symbol <- ensg.symbol %>% na.omit()
-
-#log
-rna.log <- log2(rna+1)
+rna.log <- read.table("original.rna.txt", sep="\t", header = T)
+cytof <- read.table("original.cytof.txt", sep="\t", header = T)
+protein <- read.table("original.protein.txt", sep="\t", header = T)
 
 # Fix CyTOF ####
 # Natural Killer (NK) Cells
@@ -258,8 +197,6 @@ ggarrange(out.cytof$p, out.rna$p, out.pbmc$p, out.protein$p, nrow=2, ncol=2)
 dev.off()
 
 
-
-
 # Compare distances between inter-ind visit 1-4, inter-ind visit 1-4 vs 5-6, inter-ind ####
 rna.pca <- rna.log %>% condense_PCA(Npca=50) %>% scale() %>% as.data.frame()
 
@@ -301,11 +238,9 @@ for (i in ind.uniq){
 }
 df.plot.summ <- df.plot %>% group_by(ind, group) %>% summarise(d_med=median(d), d_min=min(d), d_max=max(d)) 
 
-#df.plot$ind <- factor(df.plot$ind, levels=df.plot.summ %>% filter(group=="intra_14_dup") %>% arrange(desc(d_med)) %>% pull(ind))
 p <- ggplot() + 
   geom_point(data=df.plot.summ, aes(y=ind,x=d_med,color=group), size=3) +
   geom_segment(data=df.plot.summ, aes(y=ind, x=d_min, xend=d_max, color=group), linewidth=1) +
-  #geom_point(data=df.plot.summ, aes(y=ind,x=d_med), shape=18, size=3) + 
   scale_color_manual(values=c(intra_14="#FFCCD1", intra_56="#C9B7DC", inter="gray77", intra_14_dup="#FF828F", intra_56_dup="#AF86DB")) +
   theme_classic() +
   theme(legend.position = "none") +  
