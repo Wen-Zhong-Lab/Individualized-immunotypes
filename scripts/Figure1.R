@@ -10,13 +10,13 @@ for (i in 1:length(pack_R)) {
 }
 set.seed(1)
 
-# Load metadata ####
-metadata <- read.csv("data/S3_Wellness_visit1_6_Clin_200109.txt", sep="\t", header=T)
-metadata$visit <- gsub("Visit ", "", metadata$VisitName)
-metadata$VisitName <- NULL
-metadata$subject_id <- gsub("1-", "", metadata$subject)
-metadata$id <- paste0(metadata$subject_id, ":", metadata$visit)
-rownames(metadata) <- metadata$id
+# Load metadata ####vcf <- read.vcfR("original.genotype.vcf")
+clinical <- read.table("original.clinical.txt", sep="\t", header = T)
+metadata <- read.table("original.metadata.txt", sep="\t", header = T)
+
+rna.log <- read.table("original.rna.txt", sep="\t", header = T)
+cytof <- read.table("original.cytof.txt", sep="\t", header = T)
+protein <- read.table("original.protein.txt", sep="\t", header = T)
 
 
 # Plot some stats ####
