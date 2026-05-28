@@ -3,7 +3,7 @@ pack_R <- c("dplyr","ggplot2","ggrepel","umap", "edgeR",
             "RColorBrewer", "pheatmap", "tidyverse",
             "igraph", "biomaRt", 
             "org.Hs.eg.db", "ggpubr", 
-            "clusterProfiler",
+            "clusterProfiler", "vcfR",
             "igraph", "readxl")
 
 for (i in 1:length(pack_R)) {
@@ -12,94 +12,16 @@ for (i in 1:length(pack_R)) {
 
 set.seed(1)
 
-
 # Load ####
 source('C:/Users/albze08/Desktop/postDoc/functions/my_fisher_test.R')
 
-# Annotation of individuals
-anno <- read.csv("data/Wellness_barcodes.txt", sep="\t", header=T)
-anno <- anno[anno$Sample.type=="Helblod",]
+vcf <- read.vcfR("original.genotype.vcf")
+clinical <- read.table("original.clinical.txt", sep="\t", header = T)
+metadata <- read.table("original.metadata.txt", sep="\t", header = T)
 
-#Proteomics
-protein_data <- read.csv("data/wellness_norm_final_794_wj_alternative_anno.txt", sep="\t", header=T)
-protein_data$subject_id <- anno$Subject[match(protein_data$sample, anno$Wellness.id)]
-protein_data$id <- paste0(protein_data$subject_id, ":", protein_data$visit)
-rownames(protein_data) <- protein_data$id
-protein_data <- subset(protein_data, select=-c(iid, sample, visit, id, subject_id))
-
-# metadata
-metadata <- read.csv("data/S3_Wellness_visit1_6_Clin_200109.txt", sep="\t", header=T)
-metadata$visit <- gsub("Visit ", "", metadata$VisitName)
-metadata$VisitName <- NULL
-metadata$subject_id <- gsub("1-", "", metadata$subject)
-metadata$id <- paste0(metadata$subject_id, ":", metadata$visit)
-rownames(metadata) <- metadata$id
-
-# Filter metadata
-clinical <- metadata
-rownames(clinical) <- metadata$id
-clinical$Gender <- ifelse(clinical$Gender=="f", 0, 1)
-clinical <- subset(clinical, select=c(Gender, Height, Cap_Gluc, SBP, DBP, Weight, Waist, Hip, Bioimp_fat, Bioimp_muscle, Bioimp_bone, PhysicalActivity, Age_at_Visit, BMI, 
-                                      ProBNP, TNT, CRP, ALAT, GGT, HDL, Chol, LDL, TG, HbA1c, Urate, Gluc, CystC, Crea, ApoB.apoA1, ApoB, ApoA1))
-
-clinical$PhysicalActivity[clinical$PhysicalActivity=="aldrig"] <- 0
-clinical$PhysicalActivity[clinical$PhysicalActivity=="da_och_da"] <- 1
-clinical$PhysicalActivity[clinical$PhysicalActivity=="1_2_ggr_vecka"] <- 2
-clinical$PhysicalActivity[clinical$PhysicalActivity=="2_3_ggr_vecka"] <- 3
-clinical$PhysicalActivity[clinical$PhysicalActivity=="mer_an_3_ggr_vecka"] <- 4
-clinical$PhysicalActivity <- as.numeric(clinical$PhysicalActivity)
-
-
-#RNA-seq S3WP
-rna_s3wp <- read.table("data/wellness_PBMC_v16_norm.txt", sep="\t", header = T)
-
-
-#Cytof S3WP
-cytof <- read.table("data/original.cytof.txt", sep="\t", header = T)
-rownames(cytof) <- cytof$SampleID
-cytof <- subset(cytof, select=-SampleID)
-rownames(cytof) <- gsub("_", ":", rownames(cytof))
-
-
-# Re-format RNA-seq ####
-gene <- unique(rna_s3wp$ensg_id)
-Ngene <- length(gene)
-ind <- unique(rna_s3wp$subject)
-Nind <- length(ind)
-
-# Reformat Gene expression
-sample <- paste0(rna_s3wp$subject, ":", rna_s3wp$visit)
-rna_s3wp$sample <- sample
-
-rna.long <- rna_s3wp[, c("sample", "ensg_id", "NX")]
-rna <- pivot_wider(rna.long, names_from = ensg_id, values_from = NX) %>% as.data.frame()
-rownames(rna) <- rna$sample
-rna <- rna[,-1]
-rownames(rna) <- gsub("1-", "", rownames(rna))
-rownames(rna) <- gsub("V", "", rownames(rna))
-
-rm(rna.long)
-
-#remove genes with zero variance
-v <- apply(rna, 2, sd)
-rna <- rna[, v>0]
-
-#remove lowly expressed genes
-filter.genes <- filterByExpr(t(rna), min.count = 5, min.total.count = 10, large.n = 10, min.prop = 0.7)
-rna <- rna[,filter.genes]
-
-# symbol ID
-ensg <- colnames(rna)
-ensg.symbol <- data.frame(ensg=ensg , symbol=mapIds(org.Hs.eg.db, keys = ensg, keytype = "ENSEMBL", column="SYMBOL"))
-
-colnames(rna) <- ensg.symbol$symbol[match(colnames(rna), ensg.symbol$ensg)]
-rna <- rna[,!is.na(colnames(rna))]
-ensg.symbol <- ensg.symbol %>% na.omit()
-
-#log
-rna.log <- log2(rna+1)
-
-
+rna.log <- read.table("original.rna.txt", sep="\t", header = T)
+cytof <- read.table("original.cytof.txt", sep="\t", header = T)
+protein <- read.table("original.protein.txt", sep="\t", header = T)
 
 # Group populations into categories ####
 
@@ -377,16 +299,6 @@ GWAS.lmm$gene[GWAS.lmm$P > pval.cytof] <- NA
 
 GWAS.lmm.eqtl$gene <- ifelse(GWAS.lmm.eqtl$P<pval.rna, GWAS.lmm.eqtl$group, NA)
 
-#debug
-GWAS.1 <- gather_assoc("eQTL-mean/", pval_loose = 5e-8)
-GWAS.2 <- gather_assoc("eQTL-mean/", pval_loose = 1e-7)
-
-GWAS.shared.1 <- closest_snp_fun(GWAS.lmm.LD, GWAS.1) 
-GWAS.shared.1$gene <- GWAS.1$group[GWAS.shared.1$idx]
-
-GWAS.shared.2 <- closest_snp_fun(GWAS.lmm.LD, GWAS.2) 
-GWAS.shared.2$gene <- GWAS.2$group[GWAS.shared.2$idx]
-
 
 # Supplementary Table 4 ####
 df <- GWAS.lmm.LD[, c("SNP", "beta", "P", "group", "family", "gene")]
@@ -456,17 +368,6 @@ manhattan_plot <- function(df, pval.ths=5e-8, MAX_SNP=5e4){
   return(list(df=df_plot, p=p, chr.df=chr.df))
 }
 
-# Manhattan of specific pop ####
-manhattan.Bcells <- manhattan_plot(GWAS.lmm[grep("B_Cells", GWAS.lmm$family),], pval.ths = pval.cytof)$p + ggtitle("B cells") + theme(plot.title = element_text(hjust = 0.5))
-manhattan.CD8 <- manhattan_plot(GWAS.lmm[grep("CD8", GWAS.lmm$family),], pval.ths = pval.cytof)$p + ggtitle("CD8+ T cells") + theme(plot.title = element_text(hjust = 0.5))
-
-manh
-
-pdf("manhattan_specific_221025.pdf", width=7, height=8)
-ggarrange(manhattan.Bcells, manhattan.CD8, ncol=1)
-dev.off()
-
-
 # Combined frequency-expression Manhattan ####
 GWAS.both <- rbind(GWAS.lmm %>% mutate(omic="CyTOF"),
                    GWAS.lmm.eqtl %>% mutate(family="", omic="RNA")) %>% arrange(P)
@@ -484,13 +385,16 @@ chr.df <- manhattan.both$chr.df
 # CyTOF
 manhattan.cytof$gene <- ifelse(manhattan.cytof$P<pval.cytof, manhattan.cytof$gene, NA)
 
-pop.palette <- c("Monocytes_classical"="sienna2", "TEMRA_CD8"="#E31A1C", "NK_Cells"="turquoise", 
-                 "Naive_CD8"="#FB9A99", "Naive_CD4"="#B2DF8A",             
-                 "Basophils"="goldenrod2", "Monocytes_nonclassical"="sienna2", "Central_Memory_CD8"="#E31A1C", 
-                 "Monocytes_intermediate"="sienna2", "B_Cells"="dodgerblue4",               
-                 "Myeloid_DC"="lemonchiffon1", "Plasmacytoid_DC"="lemonchiffon1", "Naive_B_Cells"="dodgerblue2", 
-                 "Central_Memory_CD4"="#33A02C", "Effector_Memory_CD4"="#33A02C",   
-                 "TEMRA_CD4"="#33A02C", "Effector_Memory_CD8"="#E31A1C", "ILCs"="gray78")
+pop.palette <- c(
+  "Monocytes_classical" = "#C24100", "Monocytes_intermediate"  = "#E66101", "Monocytes_nonclassical"  = "#FDB863",  
+  "Basophils" = "#FFD92F", "Myeloid_DC" = "#E6AB02", "Plasmacytoid_DC" = "#B8A200",   
+  "B_Cells" = "dodgerblue4", "Naive_B_Cells" = "dodgerblue2",  
+  "Naive_CD4" = "#33A02C", "Central_Memory_CD4" = "#66C2A5","Effector_Memory_CD4" = "#1B9E77", "TEMRA_CD4" = "#41AE76",  
+  "Naive_CD8" = "#FB9A99", "Central_Memory_CD8" = "#E31A1C", "Effector_Memory_CD8" = "#B2182B", "TEMRA_CD8" = "#67001F",  
+  "NK_Cells" = "#CC78BC",  
+  "ILCs" = "#B3B3B3"   
+)
+
 manhattan.cytof$color <- ifelse(manhattan.cytof$P<pval.cytof, manhattan.cytof$family, manhattan.cytof$color)
 
 p1 <- ggplot(manhattan.cytof, aes(x=BP_cum, y=-log10(P), fill=color)) +
@@ -499,7 +403,7 @@ p1 <- ggplot(manhattan.cytof, aes(x=BP_cum, y=-log10(P), fill=color)) +
   theme_bw() +
   geom_text(aes(label=gene), cex=2, color="black") +
   scale_x_continuous(label = chr.df$CHR, breaks = chr.df$BP_mean) +
-  scale_fill_manual(values=c(pop.palette, even="gray77", odd="gray23")) + 
+  scale_fill_manual(values=c(pop.palette, even="white", odd="gray23")) + 
   scale_size_continuous(range = c(0.5,3)) + 
   labs(x = NULL, y = "-log<sub>10</sub>(p)") +
   theme(panel.grid.major.x = element_blank(),
@@ -512,17 +416,26 @@ p1 <- ggplot(manhattan.cytof, aes(x=BP_cum, y=-log10(P), fill=color)) +
 
 #RNA-seq
 df_min_p <- manhattan.rna %>%
-  group_by(gene) %>%
+  filter(P<1e-30) %>%
+  group_by(group) %>%
   slice_min(P, n = 1, with_ties = FALSE) %>%
   ungroup()
 
+cell.gene.best <- cell.gene %>% group_by(gene) %>% slice_min(pval, n=1) %>% ungroup()
+manhattan.rna$pop.network <- cell.gene.best$pop[match(manhattan.rna$group, cell.gene.best$gene)]
+table(manhattan.rna$pop.network) %>% sort()
+
+manhattan.rna$color[!is.na(manhattan.rna$pop.network)] <- manhattan.rna$pop.network[!is.na(manhattan.rna$pop.network)]
+
+
 p2 <- ggplot(manhattan.rna, aes(x=BP_cum, y=-log10(P), fill=color)) +
-  geom_point(shape=21) + 
+  geom_point(data=manhattan.rna %>% filter(!color %in% names(pop.palette)), shape=21) + 
+  geom_point(data=manhattan.rna %>% filter(color %in% names(pop.palette)), shape=21) + 
   geom_hline(yintercept=-log10(pval.rna), linetype=2) +
   theme_bw() +
-  geom_text(data=df_min_p, aes(label=gene), cex=2, color="black") +
+  geom_text(data=df_min_p, aes(label=group), cex=2, color="black") +
   scale_x_continuous(label = chr.df$CHR, breaks = chr.df$BP_mean) +
-  scale_fill_manual(values=c(even="gray77", odd="gray23")) + 
+  scale_fill_manual(values=c(pop.palette, even="white", odd="gray23")) + 
   scale_size_continuous(range = c(0.5,3)) + 
   labs(x = NULL, y = "-log<sub>10</sub>(p)") +
   theme(panel.grid.major.x = element_blank(),
@@ -533,19 +446,17 @@ p2 <- ggplot(manhattan.rna, aes(x=BP_cum, y=-log10(P), fill=color)) +
         text=element_text(size=12)) +
   ylab("-Log10 P-value")
 
-ggarrange(p1, p2, ncol=1)
-
-
 #Plot
 pdf("manhattan_CyTOF.pdf", width=7, height=4)
 p1
 dev.off()
 
+pdf("manhattan_RNA.pdf", width=7, height=4)
+p2
+dev.off()
 
 
 # Load Genotype ####
-library("vcfR")
-vcf <- read.vcfR("C:/Users/albze08/Desktop/postDoc/wellness/Wellness/Data/WGS/HPA_101_qc_maf0.05.vcf")
 snp <- vcf@fix %>% as.data.frame()
 geno <- vcf@gt %>% as.data.frame()
 rm(vcf)
@@ -573,7 +484,7 @@ for (n in 1:nrow(geno.X)){
 }
 
 
-# Contribution of genetic and non genetic variables to immune frequencies ####
+# Init ####
 var.group <- data.frame(var=c("subject_id",
                               "Age_at_Visit", 
                               "Gender", 
@@ -622,115 +533,26 @@ var.group.SNP$var <- gsub(":", "\\.", var.group.SNP$var)
 
 var.group <- rbind(var.group, var.group.SNP)
 
-lm_fun <- function(X,Y, GWAS.summary){
-  common.samples <- intersect(rownames(X), rownames(Y))
-  stopifnot(length(common.samples)>0)
+
+get_mcfadden <- function(df){
+  null_model <- glm(y ~ 1, data = df, family = binomial)
+  ll_null <- logLik(null_model)
   
-  X <- X[common.samples,] %>% as.data.frame()
-  Y <- Y[common.samples,] %>% as.data.frame()
+  # Fit full model
+  full_model <- glm(formula(df), data = df, family = binomial)
+  ll_full <- logLik(full_model)
   
-  df.out <- vector(mode="list", ncol(Y))
-  names(df.out) <- colnames(Y)
-  for (n in 1:ncol(Y)){
-    print(paste0(n, "/", ncol(Y)))
-    
-    #gather genotype of significant SNPs
-    snp_n <- GWAS.summary$SNP[GWAS.summary$group == colnames(Y)[n]]
-    if (length(snp_n)>0){
-      idx <- match(snp_n, snp$ID)
-      geno_n <- geno[idx,] %>% t() %>% as.data.frame()
-      colnames(geno_n) <- paste0("SNP:", snp_n)
-      colnames(geno_n) <- gsub(":", "\\.", colnames(geno_n) ) #formula transforms them into . anyway
-      
-      subject <- gsub("\\:.*", "", rownames(X))
-      X.geno <- geno_n[subject,] %>% as.data.frame()
-      X.geno[X.geno=="0/0"] <- 0
-      X.geno[X.geno=="0/1"] <- 1
-      X.geno[X.geno=="1/1"] <- 2
-      
-      for (k in 1:ncol(X.geno)){
-        X.geno[,k] <- as.numeric(X.geno[,k])
-      }
-      if (length(snp_n)==1){
-        colnames(X.geno) <- paste0("SNP.", snp_n)
-      }
-      df <- data.frame(y = Y[,n] %>% as.numeric(), cbind(X, X.geno)) 
-    } else {
-      df <- data.frame(y = Y[,n] %>% as.numeric(), X) 
-    }
-    
-    #lm
-    lmFit <- lm(formula(df), df)
-    lm.df <- summary(lmFit)$coefficient %>% as.data.frame()
-    lm.df$var <- rownames(lm.df)
-    
-    #ANOVA
-    af <- anova(lmFit) %>% as.data.frame()
-    af$var <- rownames(af)
-    afss <- af$"Sum Sq"
-    af$PctExp <- afss/sum(afss)*100
-    
-    #merge
-    lm.df <- merge(lm.df, af, by.x="var", by.y="var") 
-    
-    #variable category
-    lm.df <- merge(lm.df, var.group, by.x="var", by.y="var")
-    
-    #store
-    df.out[[n]] <- lm.df
-  }
-  return(df.out)
+  # McFadden R^2
+  R2_mcfadden <- 1 - ll_full/ll_null
+  
+  return(R2_mcfadden)
 }
 
-plot_varExpl <- function(df.out, Nmax=100){
-  
-  #plot max Nmax
-  if (length(df.out)>Nmax){
-    tot.pctexp <- rep(0, length(df.out))
-    for (n in 1:length(df.out)){
-      tot.pctexp[n] <- sum(df.out[[n]]$PctExp)
-    }
-    df.out <- df.out[order(tot.pctexp, decreasing=T)[1:Nmax]]
-  }
-  
-  #gather
-  df.plot <- data.frame()
-  for (n in 1:length(df.out)){
-    df <- df.out[[n]]
-    group.uniq <- unique(df$group)
-    for (k in 1:length(group.uniq)){
-      idx <- which(df$group==group.uniq[k])
-      df.plot <- rbind(df.plot,
-                       data.frame(x=names(df.out)[n], group=group.uniq[k], PctExp=sum(df$PctExp[idx])))
-    }
-  }
-  
-  #order x based on total variance explained
-  df <- df.plot %>% na.omit() %>% group_by(by=x) %>% summarise(sumPct=sum(PctExp)) %>% as.data.frame() 
-  df.plot$x <- factor(df.plot$x, df$by[order(df$sumPct, decreasing=T)])
-  
-  #order groups based on PctExp
-  df <- df.plot %>% group_by(by=group) %>% summarise(sumPct=sum(PctExp)) %>% as.data.frame()
-  df.plot$group <- factor(df.plot$group, levels=df$by[order(df$sumPct, decreasing=F)])
-  
-  #plot
-  p <- ggplot(df.plot, aes(x=x, y=PctExp, fill=group)) +
-    geom_bar(stat="identity", position="stack", color="black") +
-    scale_fill_manual(values=color_palette) + 
-    theme_classic() +
-    theme(axis.text.x = element_text(angle = -90, vjust = 0.5, hjust=0)) +
-    theme(legend.position="none") +
-    theme(plot.title = element_text(hjust = 0.5)) +
-    ylab("Variance explained") + xlab("")
-  
-  
-  #Plot total variance explained
-  df$meanPct <- df$sumPct/length(unique(df.plot$x))
-  
-  
-  return(list(p=p, df=df.plot, df2=df))  
+get_r2 <- function(df){
+  lm.out <- lm(formula(df), df) %>% summary()
+  r2 <- lm.out$r.squared
+  return(r2)
 }
-
 
 color_palette <- c("darkseagreen",	"#A30059",	"#9e5a28ff",		
                    "tomato",
@@ -755,62 +577,267 @@ clinical <- metadata %>%
                    Antibiotics_med, Diab_med, Med_details, Smoking, Smoking_hours)) %>%
   mutate(Gender=ifelse(Gender=="m",1,0))
 
+# Plot contribution of immune composition and proteomics to the clustering ####
+get_auc_crossfold <- function(df, nfold=5){
+  
+  idx <- sample(rep(1:nfold, length.out = nrow(df)))
+  mean_auc <- rep(NA, nfold)
+  for (k in 1:nfold){
+    idx.valid <- which(idx==k)
+    idx.train <- setdiff(1:nrow(df), idx.valid)
+    
+    df.train <- df[idx.train,]
+    df.valid <- df[idx.valid,]
+    
+    model.train <- glm(formula(df.train), data = df.train, family = binomial)
+    pred.valid <- predict(model.train, df.valid[,-1], type = "response")
+    pr <- prediction(pred.valid, df.valid$y)
+    auc <- performance(pr, measure = "auc")
+    mean_auc[k] <- auc@y.values[[1]]
+  }
+  auc <- mean(mean_auc)
+  
+  return(auc)
+}
 
-#major pop
+  
+  df.plot <- shap_values %>% melt()
+  
+  p <- ggplot(df.plot, aes(x=value, y=Var2)) + 
+    geom_quasirandom(aes(color=value)) +
+    scale_color_gradient(low="royalblue", high="tomato") +
+    geom_vline(xintercept=0, linetype=2) +
+    theme_classic() + theme(legend.position="bottom") +
+    ylab("") + xlab("SHAP value")
+  p
+  return(list(p=p, df=df.plot))
+}
+
+
+df.out <- data.frame()
+common.samples <- intersect(rownames(cytof.group), rownames(protein)) %>% intersect(primary_cluster$sample)
+cluster_id <- unique(primary_cluster$primary_cluster)
+for (id in cluster_id){
+
+  X.full <- cbind(
+    clinical[common.samples, c("Gender", "Age_at_Visit", "BMI")],
+    cytof.group[common.samples,], 
+    protein[common.samples,] %>% makeX(na.impute = T) %>% 
+      condense_PCA(Npca = 20) %>% as.data.frame() |> rename_with(~ paste0(.x, "protein")) %>% scale()
+  ) %>% as.data.frame()
+  
+  
+  df.y <- ifelse(primary_cluster[common.samples, "primary_cluster"] == id, 1, 0) %>% as.data.frame() |> rename_with(~"y")
+  df <- cbind(df.y, X.full)
+  
+  #prefiltering
+  lasso_model <- cv.glmnet(X.full %>% as.matrix(), df$y, alpha = 1, family = "binomial")
+  out.lasso <- coef(lasso_model, s = "lambda.min") 
+  selected_var <- rownames(out.lasso)[as.numeric(out.lasso) != 0] %>% setdiff("(Intercept)" ) 
+  
+  selected_var <- c("y", selected_var %>% union(c("Gender", "Age_at_Visit", "BMI")))
+  stopifnot(all(selected_var %in% colnames(df)))
+  df <- df[, selected_var]
+  
+  # do McFadden
+  Niter <- 100
+  for (iter in 1:Niter){
+    
+    new_order <- sample(setdiff(colnames(df), "y"))
+    df.shuffle <- df[, c("y", new_order)]
+    
+    df.n <- df.shuffle[,1,drop=F]
+    r2_prev <- 0
+    for (n in 2:ncol(df.shuffle)){
+      df.n <- cbind(df.n, df.shuffle[,n,drop=F])
+      r2 <- get_mcfadden(df.n)
+      if (r2-r2_prev<0){
+        #stopifnot(1<0)
+        print(paste0(id, ": ", colnames(df.shuffle)[n]))
+        df.n <- df.n[,1:(ncol(df.n)-1)]
+      } else {
+        df.out <- rbind(df.out,
+                        data.frame(cluster=id, r2_cum=r2, r2=r2-r2_prev, var=colnames(df.shuffle)[n]))
+        r2_prev <- r2
+      }
+    }
+  }
+}
+df.out.summ <- df.out %>% group_by(var, cluster) %>% summarise(r2=mean(r2))
+
+df.out.summ$group <- var.group$group[match(df.out.summ$var, var.group$var)]
+df.out.summ$group <- NA
+df.out.summ$group[df.out.summ$var == "Gender"] <- "Sex"
+df.out.summ$group[df.out.summ$var == "Age_at_Visit"] <- "Age"
+df.out.summ$group[df.out.summ$var == "BMI"] <- "BMI"
+df.out.summ$group[df.out.summ$var %in% colnames(cytof.group)] <- "CyTOF"
+df.out.summ$group[grep("protein", df.out.summ$var)] <- "Protein"
+
+df.plot <- df.out.summ %>% group_by(group, cluster) %>% summarise(r2=sum(r2)) 
+ord.group <- df.plot %>% group_by(group) %>% summarise(mean_r2=mean(r2)) %>% arrange(mean_r2) %>% pull(group)
+
+df.plot$group <- factor(df.plot$group, levels=ord.group)
+p <- ggplot(df.plot, aes(x=cluster, y=r2, fill=group)) +
+  geom_bar(stat="identity", position="stack", color="black") +
+  scale_fill_manual(values=c(CyTOF="royalblue", Protein="tomato", Sex="#A30059", Age="#9e5a28ff", BMI="green")) + 
+  theme_classic() +
+  theme(legend.position="none") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  ylab("Cumulative McFadden R2") + xlab("") + ggtitle("Clusters")
+p
+
+pdf("clusters_contributions_omics.pdf", height=5, width=3)
+print(p)
+dev.off()
+
+
+# Contribution of genetic and non-genetic to clusters ####
+common.samples <- intersect(rownames(primary_cluster), rownames(clinical)) 
+X <- clinical[common.samples,] %>% scale()
+snp_n <- GWAS.lmm.LD$SNP %>% unique()
+
+get_geno <- function(snp_n, X){
+  idx <- match(snp_n, snp$ID)
+  geno_n <- geno[idx,] %>% t() %>% as.data.frame()
+  colnames(geno_n) <- paste0("SNP:", snp_n)
+  colnames(geno_n) <- gsub(":", "\\.", colnames(geno_n) ) #formula transforms them into . anyway
+  
+  subject <- gsub("\\:.*", "", rownames(X))
+  X.geno <- geno_n[subject,,drop=F] 
+  X.geno[X.geno=="0/0"] <- 0
+  X.geno[X.geno=="0/1"] <- 1
+  X.geno[X.geno=="1/1"] <- 2
+  for (n in 1:ncol(X.geno)){
+    X.geno[,n] <- as.numeric(X.geno[,n])
+  }
+  return(X.geno)
+}
+X <- cbind(X, get_geno(snp_n, X))
+
+
+Niter <- 100
+df.out <- data.frame()
+cluster_id <- unique(primary_cluster$primary_cluster)
+for (id in cluster_id){
+  
+  df <- data.frame(y=ifelse(primary_cluster[common.samples, "primary_cluster"]==id, 1, 0), X)
+  df$y <- as.factor(df$y)
+  
+  #prefiltering
+  lasso_model <- cv.glmnet(X %>% makeX(na.impute = T), df$y, alpha = 1, family = "binomial")
+  out.lasso <- coef(lasso_model, s = "lambda.min") 
+  selected_var <- rownames(out.lasso)[as.numeric(out.lasso)!=0] %>% setdiff("(Intercept)" )
+  
+  stopifnot(all(selected_var %in% colnames(df)))
+  df <- df[, c("y", selected_var)]
+  for (iter in 1:Niter){
+    new_order <- sample(setdiff(colnames(df), c("y", "Gender", "Age_at_Visit")))
+    df.shuffle <- df[, c("y", "Gender", "Age_at_Visit", new_order)]
+    
+    r2_prev <- 0
+    for (n in 4:ncol(df.shuffle)){
+      df.n <- df.shuffle[,1:n]
+      r2 <- get_mcfadden(df.n)
+      if (r2-r2_prev<0){
+        stopifnot(1<0)
+      }
+      
+      df.out <- rbind(df.out, 
+                      data.frame(cluster=id, r2=r2-r2_prev, var=colnames(df.shuffle)[n]))
+      r2_prev <- r2
+    }
+  }
+}
+df.out.summ <- df.out %>% group_by(var, cluster) %>% summarise(r2=mean(r2))
+
+df.out.summ$group <- var.group$group[match(df.out.summ$var, var.group$var)]
+
+df.plot <- df.out.summ %>% group_by(group, cluster) %>% summarise(r2=sum(r2)) 
+ord.group <- df.plot %>% group_by(group) %>% summarise(mean_r2=mean(r2)) %>% arrange(mean_r2) %>% pull(group)
+
+df.plot$group <- factor(df.plot$group, levels=ord.group)
+p <- ggplot(df.plot, aes(x=cluster, y=r2, fill=group)) +
+  geom_bar(stat="identity", position="stack", color="black") +
+  scale_fill_manual(values=color_palette) + 
+  theme_classic() +
+  theme(legend.position="none") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  ylab("Cumulative McFadden R2") + xlab("") + ggtitle("Clusters")
+p
+
+pdf("clusters_contributions_2.pdf", height=5, width=3)
+print(p)
+dev.off()
+
+
+# Contribution of genetic and non-genetic to major pops ####
 GWAS.cytof.group.LD <- GWAS.lmm.LD
 for (g in names(pop.group)){
   GWAS.cytof.group.LD$group[GWAS.lmm.LD$group %in% pop.group[[g]]] <- g
 }
 
-X <- clinical[rownames(cytof.group),] %>% scale() %>% as.data.frame()
-Y <- cytof.group %>% scale() %>% as.data.frame()
-lm.cytof.out <- lm_fun(X=X, 
-                       Y=Y, 
-                       GWAS.summary=GWAS.cytof.group.LD)
+common.samples <- intersect(rownames(cytof.group), rownames(clinical))
+X <- clinical[common.samples,] %>% scale() %>% as.data.frame()
 
-out.varExpl <- plot_varExpl(lm.cytof.out)
-out.varExpl$p
+Niter <- 100
+major.pop <- colnames(cytof.group)
+df.out <- data.frame()
+for (pop in major.pop){
+  
+  snp_n <- GWAS.cytof.group.LD$SNP[GWAS.cytof.group.LD$group == pop]
+  if (length(snp_n)>0){
+    geno_pop <- get_geno(snp_n, X)
+    X_pop <- cbind(X, geno_pop)
+  } else {
+    X_pop <- X
+  }
+  df <- data.frame(y=cytof.group[common.samples, pop], X_pop)
+  
+  for (iter in 1:Niter){
+    
+    new_order <- sample(setdiff(colnames(df), c("y", "Gender", "Age_at_Visit")))
+    df.shuffle <- df[, c("y", "Gender", "Age_at_Visit", new_order)]
+    
+    r2_prev <- 0
+    for (n in 4:ncol(df.shuffle)){
+      df.n <- df.shuffle[,1:n]
+      r2 <- get_r2(df.n)
+      if (r2-r2_prev<0){
+        #stopifnot(1<0)
+        print(paste0(pop, ": ", colnames(df.shuffle)[n]))
+      }
+      
+      df.out <- rbind(df.out, 
+                      data.frame(pop=pop, r2=r2-r2_prev, var=colnames(df.shuffle)[n]))
+      r2_prev <- r2
+    }
+  }
+}
+df.out.summ <- df.out %>% group_by(var, pop) %>% summarise(r2=mean(r2))
+df.out.summ$group <- var.group$group[match(df.out.summ$var, var.group$var)]
 
-pdf("anova.pdf", width=4, height=3)
-out.varExpl$p
-dev.off()
+df.plot <- df.out.summ %>% group_by(group, pop) %>% summarise(r2=sum(r2)) 
 
-df <- out.varExpl$df
-df <- df %>% arrange(group, desc(PctExp))
+ord.group <- df.plot %>% group_by(group) %>% summarise(mean_r2=mean(r2)) %>% arrange(mean_r2) %>% pull(group)
+ord.pop <- df.plot %>% group_by(pop) %>% summarise(tot_r2=sum(r2)) %>% arrange(tot_r2) %>% pull(pop) %>% rev()
 
-#specific pop
-X <- clinical[rownames(cytof),] %>% scale() %>% as.data.frame()
-Y <- cytof %>% scale() %>% as.data.frame()
-lm.cytof.all <- lm_fun(X=X, 
-                       Y=Y, 
-                       GWAS.summary=GWAS.lmm.LD)
+df.plot$pop <- factor(df.plot$pop, levels=ord.pop)
+df.plot$group <- factor(df.plot$group, levels=ord.group)
 
-out.varExpl <- plot_varExpl(lm.cytof.all)
-
-df.plot <- data.frame(out.varExpl$df)
-df.plot <- merge(df.plot, macro.anno.my, by.x="x", by.y="row.names")
-colnames(df.plot)[ncol(df.plot)] <- "family"
-
-pop.palette <- c("NK_cells"="turquoise",  "monocytes"="sienna2", "Dendritic_cells"="lemonchiffon1", "basophils"="goldenrod2", "Other"="gray78", 
-                 "Naive_B_cells"="dodgerblue2", "B_cells"="dodgerblue4", "CD4pos_naive" ="#B2DF8A",   
-                 "CD8pos_naive"="#FB9A99", "CD4pos"="#33A02C", "CD8pos"="#E31A1C")
-color_palette <- c(color_palette, pop.palette)
-
-
-p <- ggplot(df.plot, aes(x=x, y=PctExp, fill=group)) +
+p <- ggplot(df.plot, aes(x=pop, y=r2, fill=group)) +
   geom_bar(stat="identity", position="stack", color="black") +
-  geom_tile(aes(x=x, y=-3, height=3, fill=family)) +
   scale_fill_manual(values=color_palette) + 
   theme_classic() +
-  theme(axis.text.x = element_text(angle = -90, vjust = 0.5, hjust=0)) +
   theme(legend.position="none") +
   theme(plot.title = element_text(hjust = 0.5)) +
-  ylab("Variance explained") + xlab("") + ggtitle("Immune frequencies")
+  ylab("Cumulative R2") + xlab("") + ggtitle("Major populations")
 p
 
-
-# Plot examples of genotype---frequency associations  ####
-
+pdf("contribution_major_pop_2.pdf", width=4, height=3)
+print(p)
+dev.off()
+    
+# Plot examples of genotype--> frequency ####
 plot_SNP_frequency <- function(snp_id, pop, major.pop=NULL){
   idx.snp <- which(snp$ID==snp_id)
   if (is.null(major.pop)){
@@ -827,31 +854,9 @@ plot_SNP_frequency <- function(snp_id, pop, major.pop=NULL){
   df.plot <- na.omit(df.plot)
   df.plot$geno <- ifelse(df.plot$geno =="0/0", 0, 1) %>% as.character()
   
-  p1 <- ggplot(df.plot, aes(x=geno, y=value)) +
-    geom_quasirandom(dodge.width=0.8, shape=21, size=2, color="black") +  
-    geom_boxplot(fill=NA, outlier.shape=NA) + 
-    xlab(snp_id) + ylab("Percentile in the cohort") +
-    theme_classic() + theme(legend.position="none", plot.title = element_text(size=10))
-  
-  p2 <- ggplot(df.plot, aes(x=visit, y=value, color=geno, fill=geno)) + 
-    geom_line(aes(group=ind), alpha=0.5) +
-    geom_point(data=df.plot %>% na.omit() %>% filter(geno=="0/0"), size=3, shape=21, color="black", alpha=0.8) +
-    geom_point(data=df.plot %>% na.omit() %>% filter(geno=="0/1"), size=3, shape=21, color="black", alpha=0.8) +
-    geom_point(data=df.plot %>% na.omit() %>% filter(geno=="1/1"), size=3, shape=21, color="black", alpha=0.8) +
-    theme_classic() + theme(legend.position = "bottom") +
-    ylab("Percentile in the cohort") + ggtitle(pop.name) + theme(plot.title = element_text(hjust = 0.5))
-  
   df.plot.summ <- df.plot %>% group_by(geno, visit) %>% 
     summarise(min_value=min(value), max_value=max(value), median_value=median(value), low_05=quantile(value, 0.025), high_05=quantile(value, 0.975)) %>% 
     as.data.frame()
-  
-  p3 <- ggplot(df.plot.summ, aes(x=visit, fill=geno)) + 
-    geom_line(data=df.plot, aes(x=visit, y=value, group=ind, color=geno), alpha=0.5) +
-    geom_ribbon(aes(ymin=min_value, ymax=max_value)) +
-    geom_point(size=3, aes(y=median_value), shape=21) +
-    theme_classic() + theme(legend.position="bottom") +
-    ylab("Percentile in the cohort")
-  p3
   
   p4 <- ggplot(df.plot.summ, aes(x = visit, fill = geno, group = geno)) +
     geom_ribbon(aes(ymin = low_05, ymax = high_05), alpha = 0.3)  +
@@ -863,7 +868,7 @@ plot_SNP_frequency <- function(snp_id, pop, major.pop=NULL){
     ggtitle(pop.name)
   p4
   
-  return(list(df=df.plot, p1=p1, p2=p2, p3=p3, p4=p4))
+  return(list(df=df.plot, p4=p4))
 }
 
 GWAS.lmm.LD <- GWAS.lmm.LD %>% arrange(desc(beta))
@@ -876,57 +881,9 @@ for (n in 1:nrow(GWAS.lmm.LD.B)){
   pop_n <- GWAS.lmm.LD.B$group[n]
   
   out <- plot_SNP_frequency(snp_n, pop_n, major.pop=GWAS.lmm.LD.B$family[n])
-  p1 <- out$p1
-  p2 <- out$p3
   p4 <- out$p4
   print(p4)
 }
-dev.off()
-
-pdf(paste0("pdfs/2610-CD8", ".pdf"), height=3, width=4)
-GWAS.lmm.pop <- GWAS.lmm.LD[grep("CD8", GWAS.lmm.LD$group), ]
-for (n in 1:nrow(GWAS.lmm.pop)){
-  
-  snp_n <- GWAS.lmm.pop$SNP[n]
-  pop_n <- GWAS.lmm.pop$group[n]
-  
-  out <- plot_SNP_frequency(snp_n, pop_n, major.pop=GWAS.lmm.pop$family[n])
-  p1 <- out$p1
-  p2 <- out$p3
-  p4 <- out$p4
-  print(p4)
-}
-dev.off()
-
-
-
-# MAF vs p-value ####
-GWAS.lmm.LD$MAF <- NA
-for (n in 1:nrow(GWAS.lmm.LD)){
-  idx <- which(snp$ID == GWAS.lmm.LD$SNP[n])[1]
-  str <- strsplit(geno[idx,] %>% as.character() %>% na.omit(), "/") %>% unlist()
-  allel.freq <- str %>% table()
-  GWAS.lmm.LD$MAF[n] <- sum ((allel.freq %>% names() %>% as.numeric()) * (allel.freq %>% as.numeric()))/length(str)
-}
-
-df.plot <- GWAS.lmm.LD %>% filter(family %in% c("B_Cells", "Central_Memory_CD8"))
-family.ord <- GWAS.lmm.LD %>% group_by(family) %>% summarise(mean_MAF=median(MAF, na.rm=T)) %>% 
-  arrange(desc(mean_MAF)) %>%
-  pull(family)
-df.plot$family <- factor(df.plot$family, levels=family.ord)
-
-label.n.SNP <- df.plot %>% group_by(family) %>% summarise(n=n())
-df.plot <- df.plot %>% arrange(family, MAF)
-p <- ggplot(df.plot, aes(x=family, y=MAF)) +
-  geom_boxplot(width=0.3, outlier.shape=NA) +
-  geom_quasirandom(alpha=0.5, shape=21, fill="gray77", color="black") +
-  geom_text(data=label.n.SNP, aes(x=family, label=n, y=0.2)) +
-  theme_classic()  +
-  xlab("") +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
-p
-pdf("MAF-pop.pdf", height=4, width=3)
-print(p)
 dev.off()
 
 
@@ -985,26 +942,6 @@ p
 pdf("PGS-cluster.pdf", width=4, height=3)
 print(p)
 dev.off()
-  
-
-#PGS based on cluster
-pheno$cluster <- primary_cluster$primary_cluster[match(pheno$sample, primary_cluster$sample)]
-
-comparisons <- list(c(1,2), c(1,3), c(2,3))
-ggplot(pheno %>% na.omit(), aes(x=cluster, y=PRS_rank)) +
-  geom_boxplot() +
-  stat_compare_means(method="wilcox.test", comparisons=comparisons, size=3) +
-  theme_classic()
-
-# Load network ####
-cell.gene <- readRDS("Ensemble_ILR-306025.RDS") %>% bind_rows() %>% 
-  filter(estimate>0) %>% 
-  mutate(pval.BH=p.adjust(pval, method="BH")) %>% filter(pval.BH<0.05) %>% 
-  filter(gene %in% colnames(rna)) 
-colnames(cell.gene)[1] <- "pop"
-table(cell.gene$pop) %>% sort()
-
-my_fisher_test(GWAS.lmm.LD.eqtl$group %>% unique(), colnames(rna.log), cell.gene %>% filter(pop=="B_Cells") %>% pull(gene) %>% unique())
 
 
 # PRS and gene expression ####
@@ -1041,3 +978,4 @@ pdf("pdfs/PGS-memory B-genes-mean.pdf", width=3, height=3)
 print(p)
 dev.off()
     
+
