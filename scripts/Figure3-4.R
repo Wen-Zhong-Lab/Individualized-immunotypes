@@ -613,7 +613,41 @@ pop.palette <- c("monocytes"="sienna2", "CD8pos"="#E31A1C", "NK_cells"="turquois
                  "CD4pos"="#33A02C", "Other"="gray78")
 
 # HPA validation ####
-source('C:/Users/albze08/Desktop/postDoc/functions/my_fisher_test.R')
+my_fisher_test <- function(list_1, background ,list_2, alternative="greater"){
+  stopifnot(class(list_1)=="character")
+  stopifnot(class(background)=="character")
+  stopifnot(class(list_2)=="character")
+  
+  list_1 <- unique(list_1)
+  background <- unique(background)
+  list_2 <- unique(list_2)
+  
+  if (!all(list_1 %in% background)){
+    warning("not all list_1 was in background")
+    list_1 <- intersect(list_1, background)
+  }
+  if (!all(list_2 %in% background)){
+    warning("not all list_2 was in background")
+    list_2 <- intersect(list_2, background)
+  }
+  
+  #contingency table
+  a <- list_1 %>% intersect(list_2) %>% length()
+  b <- list_1 %>% setdiff(list_2) %>% length()
+  c <- background %>% intersect(list_2) %>% setdiff(list_1) %>% length()
+  d <- length(background) - a - b- c
+  
+  cont_mat <- matrix(c(a,b,c,d), nrow=2, ncol=2, byrow = TRUE)
+  
+  #test
+  test <- fisher.test(cont_mat, alternative=alternative)
+  
+  #output result
+  out <- data.frame(p_value = test$p.value, odds_ratio = test$estimate["odds ratio"], n_genes=a,
+                    row.names = NULL)
+  return(out)
+}
+
 enrich_HPA <- function(g){
   g.ensg <- ensg.symbol$ensg[ensg.symbol$symbol %in% g]
   
@@ -678,7 +712,6 @@ df.HPA.module$adj.pval <- p.adjust(df.HPA.module$pval, method="BH")
 
 p <- ggplot(df.HPA.module %>% filter(adj.pval<0.05), aes(y=pop,x=cluster)) +
   geom_point(aes(color=-log10(adj.pval), size=OR)) + 
-  #scale_fill_gradientn(colors=c("darkred", "tomato", "gray", "gray88"), values=c(0,0.05, 0.1,1), breaks=0.05, labels="0.05") +
   theme_bw() + 
   theme(axis.text.x = element_text(angle = -90, vjust = 0.5, hjust=0), legend.position="bottom") +
   theme(text=element_text(size=10, family="Arial"), plot.title = element_text(hjust = 0.5)) +
@@ -1243,47 +1276,6 @@ radarchart(df.plot,
            cglwd = 0.8)
 dev.off()
            
-
-
-#Radar of marker genes ####
-rna.rank <- 100*apply(rna.log,2,rank)/nrow(rna.log)
-
-sample.A <- primary_cluster$sample[primary_cluster$primary_cluster=="1"] %>% intersect(rownames(rna.rank))
-sample.B <- primary_cluster$sample[primary_cluster$primary_cluster=="2"] %>% intersect(rownames(rna.rank))
-sample.C <- primary_cluster$sample[primary_cluster$primary_cluster=="3"] %>% intersect(rownames(rna.rank))
-df.plot <-  data.frame(A=c(100,0,
-                           rna.rank[sample.A, "BLK"] %>% median(na.rm=T),
-                           rna.rank[sample.A, "GZMH"] %>% median(na.rm=T),
-                           rna.rank[sample.A, "CES1"] %>% median(na.rm=T)),
-                       B=c(100,0,
-                           rna.rank[sample.B, "BLK"] %>% median(na.rm=T),
-                           rna.rank[sample.B, "GZMH"] %>% median(na.rm=T),
-                           rna.rank[sample.B, "CES1"] %>% median(na.rm=T)),
-                       C=c(100,0,
-                           rna.rank[sample.C, "BLK"] %>% median(na.rm=T),
-                           rna.rank[sample.C, "GZMH"] %>% median(na.rm=T),
-                           rna.rank[sample.C, "CES1"] %>% median(na.rm=T))
-)
-
-pdf("radar-rna.pdf", height=5, width=5)
-radarchart(df.plot,
-           maxmin=T,
-           axistype = 1,
-           pcol = c("#4A8FE7", "#44E5E7", "#D89D6A"),      # line color
-           pfcol = scales::alpha(c("#4A8FE7", "#44E5E7", "#D89D6A"), 0.3),  # fill color
-           plty = 0,            # line width
-           cglcol = "black",     # grid color
-           cglty = 1,           # grid line type
-           axislabcol = "#141414c9",
-           cglwd = 0.8)
-dev.off()
-
-
-           
-
-
-
-
 # Limma on RNA ####
 library("limma")
 primary_cluster$primary_cluster <- as.character(primary_cluster$primary_cluster)
@@ -1661,47 +1653,6 @@ radarchart(df.plot,
            axislabcol = "#141414c9",
            cglwd = 0.8)
 dev.off()
-
-
-
-#lm for clinical and lifestyle
-library("emmeans")
-
-clinical <- metadata %>%
-  subset(select=-c(SCAPISorIGT_id, subject, Study, Visitdate, id, visit, Birthdate, subject_id,
-                   Hb, WBC, Plt, RBC, Hct, MCV, MCH, MCHC, Neut, Lymph, Mono, Eos, Baso,
-                   Housing_change, Housing_current, Address_change, MaritalStatus_change, MaritalStatus_current, ShareHousehold_change, 
-                   ShareHousehold_current, Employment_change, Employment_current, Tobacco_change, Tobacco_current, PerceivedHealth,       
-                   Stress, PhysicalActivity, SedentaryTime_hours, SedentaryTime_minutes, SedentaryTime_unknown, TravelAbroad,          
-                   TravelAbroad_country, Animals, Animals_type,
-                   Calcitriol, Calcidiol, Health_Other, Common_cold_influenzae, NSAID_painmed, Bp_med, Lipid_med,             
-                   Antibiotics_med, Diab_med, Med_details, Smoking, Smoking_hours)) %>% 
-  mutate(Gender=ifelse(Gender=="m", 1, 0))
-
-lm.clinical <- data.frame()
-for (n in 1:ncol(clinical)){
-  
-  df <- primary_cluster
-  df$primary_cluster <- as.character(df$primary_cluster)
-  df$x <- clinical[match(df$sample, metadata$id), n]
-  
-  fit <- lm(x ~ primary_cluster, df)
-  lm.clinical <- rbind(lm.clinical,
-                       emmeans(fit, specs = "primary_cluster") %>%
-                         contrast(method = "del.eff", adjust = "none") %>% as.data.frame() %>% mutate(var=colnames(clinical)[n]))
-  
-}
-lm.clinical$adj.pval <- p.adjust(lm.clinical$p.value,  method="BH")
-lm.clinical$cluster <- NA
-lm.clinical$cluster[lm.clinical$contrast == "primary_cluster1 effect"] <- "clusterA"
-lm.clinical$cluster[lm.clinical$contrast == "primary_cluster2 effect"] <- "clusterB"
-lm.clinical$cluster[lm.clinical$contrast == "primary_cluster3 effect"] <- "clusterC"
-
-# summary clinical differences
-clinical.summ <- data.frame(upA=sum(lm.clinical$adj.pval<0.05 & lm.clinical$cluster=="clusterA" & lm.clinical$estimate>0),
-                       upB=sum(lm.clinical$adj.pval<0.05 & lm.clinical$cluster=="clusterB" & lm.clinical$estimate>0),
-                       upC=sum(lm.clinical$adj.pval<0.05 & lm.clinical$cluster=="clusterC" & lm.clinical$estimate>0))
-clinical.summ$notSign <- ncol(clinical) - clinical.summ$upA - clinical.summ$upB - clinical.summ$upC
 
 
 
