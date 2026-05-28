@@ -13,8 +13,6 @@ for (i in 1:length(pack_R)) {
 set.seed(1)
 
 # Load ####
-source('C:/Users/albze08/Desktop/postDoc/functions/my_fisher_test.R')
-
 vcf <- read.vcfR("original.genotype.vcf")
 clinical <- read.table("original.clinical.txt", sep="\t", header = T)
 metadata <- read.table("original.metadata.txt", sep="\t", header = T)
@@ -979,3 +977,78 @@ print(p)
 dev.off()
     
 
+# CD8 freq based on PGS ####
+major.pop <- "Central_Memory_CD8"
+df.snp <- GWAS.lmm.LD %>% filter(family == major.pop)
+df.snp$beta_weighted <- NA
+
+pop.spec <- unique(df.snp$group)
+for (pop in pop.spec){
+  idx <- which(df.snp$group == pop)
+  relative.freq <- mean(cytof.nonnegative[,pop])/mean(cytof.group[,major.pop])
+  
+  df.snp$beta_weighted[idx] <- df.snp$beta[idx]*relative.freq
+}
+
+idx.geno <- match(df.snp$SNP, snp$ID)
+PRS <- apply(geno.X[idx.geno,], 2, function(x){sum(x*df.snp$beta_weighted, na.rm=T)}) # scale by relative freq of that specific pop?
+
+pheno <- data.frame(y=cytof.group[,major.pop], sample=rownames(cytof.group))
+pheno$ind <- gsub("\\:.*", "", pheno$sample)
+pheno$PRS <- PRS[pheno$ind]
+pheno$PRS_rank <- rank(pheno$PRS)
+pheno$PRS_norm <- scale(pheno$PRS) %>% as.numeric()
+
+ind.uniq <- unique(pheno$ind)
+color.UMAP <- grDevices::colors()[grep('gr(a|e)y', grDevices::colors(), invert = T)] %>% sample(length(ind.uniq))
+color.UMAP <- setNames(color.UMAP, ind.uniq)
+
+p <- ggplot(pheno, aes(x=PRS, y=y)) +
+  geom_point(aes(fill=ind), shape=21, size=2) +
+  geom_smooth(method="lm", color="red", size=1) +
+  geom_text(label=paste0("Spearman's r= ", cor(pheno$PRS, pheno$y, method="spearman") %>% round(digits=2)), x=5, y=0.03) +
+  scale_fill_manual(values=color.UMAP) +
+  theme_classic() + theme(legend.position = "none") +
+  xlab("Polygenic score") + ylab("Central Memory CD8")
+p
+
+pdf("pdfs/PGS-Central CD8-mean.pdf", width=3, height=3)
+print(p)
+dev.off()
+
+cor(pheno$y, pheno$PRS_norm, method="spearman")
+
+
+# PRS and gene expression of Central_Memory_CD8 ####
+Bcell.g <- cell.gene %>% filter(pop %in% c("Central_Memory_CD8", "Effector_Memory_CD8", "Naive_CD8")) %>% pull(gene) %>% unique()
+df.DEG <- data.frame()
+for (g in Bcell.g){
+  
+  df <- pheno
+  df$gene <- rna.log[match(df$sample, rownames(rna.log)),g] 
+  
+  lmFit <- lm(gene~PRS_norm, df) %>% summary() %>% coefficients() %>% as.data.frame() %>% mutate(gene=g)
+  
+  df.DEG <- rbind(df.DEG,
+                  lmFit["PRS",])
+}
+df.DEG$adj.pval <- p.adjust(df.DEG$`Pr(>|t|)`, method="BH")
+df.DEG$fill <- ifelse(df.DEG$adj.pval<0.05, "notDEG", "DEG")
+
+df.DEG <- df.DEG %>% arrange(adj.pval)
+
+df.DEG$label <- NA
+df.DEG$label[1:50] <- df.DEG$gene
+p <- ggplot(df.DEG, aes(x=Estimate, y=-log10(adj.pval), fill=fill)) +
+  geom_point(shape=21, size=2) +
+  geom_text(aes(label=label), size=2) +
+  geom_vline(xintercept=0, linetype=2) +
+  geom_hline(yintercept=0, linetype=2) +
+  geom_hline(yintercept=-log10(0.05), linetype=2) +
+  scale_fill_manual(values=c(notDEG="gray77", DEG="gray35")) +
+  theme_classic() + theme(legend.position = "none")
+p
+
+pdf("pdfs/PGS-memory CD8module-genes-mean.pdf", width=3, height=3)
+print(p)
+dev.off()
